@@ -1,4 +1,5 @@
 import SwingTwistKusudama.Vec
 import SwingTwistKusudama.Scene
+import SwingTwistKusudama.Kusudama
 import SwingTwistKusudama.Sim
 import SwingTwistKusudama.Sweep

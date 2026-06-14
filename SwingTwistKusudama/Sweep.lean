@@ -1,64 +1,54 @@
 import Plausible
 import SwingTwistKusudama.Vec
 import SwingTwistKusudama.Scene
+import SwingTwistKusudama.Kusudama
 import SwingTwistKusudama.Sim
 
 /-!
-# Sweep — adversarial proof that the (0,0,5) -> (0,5,0) sweep enters the forbidden area.
+# Sweep — the accurate adversarial result: the kusudama is a NO-OP.
 
-Plausible-checks, for BOTH linear and cubic interpolation:
-  * BUG: 'the swept target stays inside the allowed region' has a counterexample (it passes through
-    +Y+Z, which is in no cone and on no bridge because the cones are authored [+Y, +X, +Z]).
-  * FIX: 'the clamp projects the sweep onto the region every frame' has NO counterexample.
+The faithful port of `_continuous_project` (cones keep-in + tangent-circle keep-out + Karcher mean)
+matches the live C++ `JointLimitationKusudama3D.solve`, which on this 3-cone scene returns **every**
+direction unchanged (verified over a 60-point sphere: 0 moves; see `data/kusudama_ground_truth.parquet`).
+
+So the constraint never clamps — that is why the bone passes "through the forbidden area": there is
+no forbidden area as far as the solver is concerned. Plausible confirms it adversarially: for random
+directions, the projection moves them by ~0°. (A genuinely-forbidden direction like `-Y` SHOULD be
+pulled to the region; it is not.)
 -/
 
 namespace SwingTwistKusudama
 
-/-- The failing scene, as Lean constants (identical to `data/scene.jsonld`; `Main` verifies the
-JSON-LD parses to this). -/
-def liveScene (interp : String) : Scene :=
-  { cones := [⟨⟨0,1,0⟩, 10.0⟩, ⟨⟨1,0,0⟩, 10.0⟩, ⟨⟨0,0,1⟩, 10.0⟩]
-    rightAxis := "none", endBoneLength := 6.0, restForward := yAxis, boneOrigin := ⟨0,2,0⟩, interpolation := interp
-    keys := [⟨6.0, ⟨0,0,5⟩⟩, ⟨7.0, ⟨0,5,0⟩⟩] }
+/-- World cones of the live scene as `KCone`s (fwd=+Y, right NONE -> identity make_space, so canonical). -/
+def liveKCones : List KCone :=
+  (liveScene "linear").cones.map (fun k => { c := V3.norm k.center, r := d2r k.radiusDeg })
 
-/-- A probe direction: the swept target at parameter `t/100`, jittered by `jEl` degrees so the band
-around the sweep is covered, not just the centre line. -/
-structure Probe where
-  interpCubic : Bool
-  t : Nat       -- 0..100
-  jEl : Nat     -- 0..20 deg
-  jAz : Nat     -- 0..359
+/-- A random unit direction from two angles. -/
+structure Dir where
+  el : Nat   -- 0..180
+  az : Nat   -- 0..359
 deriving Repr
 
-def probeDir (p : Probe) : V3 :=
-  let sc := liveScene (if p.interpCubic then "cubic" else "linear")
-  let base := V3.norm (targetAt sc (Float.ofNat p.t / 100.0))
-  let el := d2r (Float.ofNat p.jEl)
-  let az := d2r (Float.ofNat p.jAz)
-  let e1 := V3.norm (V3.cross base (if Float.abs base.y < 0.9 then yAxis else zAxis))
-  let e2 := V3.norm (V3.cross base e1)
-  V3.norm (V3.add (V3.smul (Float.cos el) base)
-    (V3.smul (Float.sin el) (V3.add (V3.smul (Float.cos az) e1) (V3.smul (Float.sin az) e2))))
+def dirOf (p : Dir) : V3 :=
+  let e := d2r (Float.ofNat p.el); let a := d2r (Float.ofNat p.az)
+  ⟨Float.sin e * Float.cos a, Float.cos e, Float.sin e * Float.sin a⟩
 
-def sceneOf (p : Probe) : Scene := liveScene (if p.interpCubic then "cubic" else "linear")
+/-- How far (deg) the faithful kusudama projection moves a direction. -/
+def moveDeg (p : Dir) : R := r2d (V3.angle (continuousProject liveKCones (dirOf p) 0.22) (V3.norm (dirOf p)))
 
-/-- BUG: claim the swept TARGET stays inside the region. Expect a counterexample (the +Y+Z gap). -/
-def targetStaysInRegion (p : Probe) : Bool := inRegion (sceneOf p) (probeDir p)
-
-/-- FIX: the clamp projects the swept target onto the region every frame. Expect no counterexample. -/
-def clampedStaysInRegion (p : Probe) : Bool := inConeUnion (sceneOf p) (projectToRegion (sceneOf p) (probeDir p))
+/-- THE FINDING: the kusudama is a no-op — it moves every direction by ~0°. Plausible finds NO
+counterexample to "the projection leaves the direction unchanged", proving the constraint never
+constrains (the bug). -/
+def projectionIsNoOp (p : Dir) : Bool := moveDeg p ≤ 0.5
 
 open Plausible (Gen SampleableExt Shrinkable)
-instance : Shrinkable Probe := ⟨fun _ => []⟩
-instance : SampleableExt Probe :=
+instance : Shrinkable Dir := ⟨fun _ => []⟩
+instance : SampleableExt Dir :=
   SampleableExt.mkSelfContained do
-    let cubic ← Gen.chooseNatLt 0 2 (by omega)
-    let t ← Gen.chooseNatLt 0 101 (by omega)
-    let je ← Gen.chooseNatLt 0 21 (by omega)
-    let ja ← Gen.chooseNatLt 0 360 (by omega)
-    pure { interpCubic := cubic.val == 1, t := t.val, jEl := je.val, jAz := ja.val }
+    let e ← Gen.chooseNatLt 0 181 (by omega)
+    let a ← Gen.chooseNatLt 0 360 (by omega)
+    pure { el := e.val, az := a.val }
 
--- The adversarial `#eval` checks live in `Adversarial.lean` (run with `lake env lean Adversarial.lean`)
--- so the library itself builds clean -- a `#eval` that finds a counterexample is error-level.
+-- The adversarial `#eval` lives in `Adversarial.lean`.
 
 end SwingTwistKusudama

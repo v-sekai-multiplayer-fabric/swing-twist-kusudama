@@ -1,5 +1,6 @@
 import SwingTwistKusudama.Vec
 import SwingTwistKusudama.Scene
+import SwingTwistKusudama.Kusudama
 
 /-!
 # Sim — the SwingTwistIK3D solve on the scene tree (skeleton omitted).
@@ -50,42 +51,18 @@ def worldCone (sc : Scene) (k : Cone) : V3 :=
   let right := if sc.rightAxis == "plusZ" then zAxis else ⟨0, 0, 0⟩ -- NONE -> zero -> shortest-arc
   V3.norm (makeSpaceApply sc.restForward right k.center)
 
-def inConeUnion (sc : Scene) (d : V3) : Bool :=
-  sc.cones.any (fun k => V3.angle (worldCone sc k) d ≤ d2r k.radiusDeg)
+/-- The cones in WORLD space as `KCone`s for the faithful kusudama projection. -/
+def worldKCones (sc : Scene) : List KCone :=
+  sc.cones.map (fun k => { c := worldCone sc k, r := d2r k.radiusDeg })
 
-/-- Consecutive cone pairs (the only ones a tangent bridge joins). -/
-def adjacentPairs (sc : Scene) : List (Cone × Cone) :=
-  (sc.cones.zip (sc.cones.drop 1))
+/-- The kusudama clamp == Godot's `_continuous_project` over the world cones (this is exactly what
+`_clamp_swing_twist` invokes for the extended end bone, in the make_space frame). -/
+def clamp (sc : Scene) (d : V3) : V3 := continuousProject (worldKCones sc) d 0.22
 
-/-- `d` lies on the tangent bridge of an adjacent pair: within `bridgeR` of the great-circle arc
-between the two cone centers, and angularly between them. -/
-def bridgeR : R := d2r 12.0
-def onArc (a b d : V3) : Bool :=
-  let n := V3.norm (V3.cross a b)
-  let offArc := Float.abs (pi / 2.0 - V3.angle n d)
-  let between := (V3.angle a d ≤ V3.angle a b) && (V3.angle b d ≤ V3.angle a b)
-  (offArc ≤ bridgeR) && between
-
-def inRegion (sc : Scene) (d : V3) : Bool :=
-  inConeUnion sc d ||
-  (adjacentPairs sc).any (fun pr => onArc (worldCone sc pr.1) (worldCone sc pr.2) d)
-
-/-- The clamp: slerp `d` toward the nearest cone center until just inside the cone (0.95 * radius). -/
-def nearestCone (sc : Scene) (d : V3) : Cone :=
-  match sc.cones with
-  | [] => { center := yAxis, radiusDeg := 0 }
-  | c :: cs => cs.foldl (fun best k => if V3.dot (worldCone sc k) d > V3.dot (worldCone sc best) d then k else best) c
-
-def projectToRegion (sc : Scene) (d : V3) : V3 :=
-  let k := nearestCone sc d
-  let c := worldCone sc k
-  let th := V3.angle c d
-  let r := d2r k.radiusDeg
-  if th ≤ r then d
-  else
-    let tgt := r * 0.95
-    let ax := V3.cross c d
-    if V3.len ax < 1e-9 then d else rotAxis (V3.norm ax) (-(th - tgt)) d
+/-- `d` is inside the allowed region iff the faithful projection does not move it (beyond a tiny
+soft-band tolerance). Forbidden directions get pulled to the boundary (a large move). -/
+def inRegionTol : R := d2r 2.0
+def inRegion (sc : Scene) (d : V3) : Bool := V3.angle (clamp sc d) d ≤ inRegionTol
 
 /-- The bone's AIM direction at sweep `t`: from the bone's global origin to the target (what the
 extended end bone points its extension along), before clamping. -/
@@ -93,7 +70,9 @@ def aimDir (sc : Scene) (t : R) : V3 :=
   let v := V3.sub (targetAt sc t) sc.boneOrigin
   if V3.isZero v then sc.restForward else V3.norm v
 
-/-- The solved extension direction at sweep parameter `t`: aim at the target, then clamp. -/
-def solve (sc : Scene) (t : R) : V3 := projectToRegion sc (aimDir sc t)
+/-- The solved extension direction at sweep `t`: aim at the target, then run the faithful kusudama
+clamp. For this single extended bone, this IS SwingTwistIK3D's solve (the Kabsch reduces to the
+shortest-arc aim, the twist is canonical, and `_clamp_swing_twist` calls `_continuous_project`). -/
+def solve (sc : Scene) (t : R) : V3 := clamp sc (aimDir sc t)
 
 end SwingTwistKusudama

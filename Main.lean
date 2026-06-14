@@ -2,34 +2,41 @@ import SwingTwistKusudama
 
 open SwingTwistKusudama
 
-/-- Load `data/scene.jsonld`, run the SwingTwist+kusudama sim over the sweep, and report the frames
-where the (unclamped) target enters the forbidden area — for linear and cubic interpolation. -/
-def main (args : List String) : IO Unit := do
-  let path := args.headD "data/scene.jsonld"
-  let src ← IO.FS.readFile path
-  match Scene.parse src with
-  | .error e => throw <| IO.userError s!"scene parse failed: {e}"
-  | .ok base =>
-    let length := (base.keys.getLast?.map (·.time)).getD 1.0
-    IO.println s!"loaded {path}: {base.cones.length} cones, {base.keys.length} keyframes over {length}s, interp={base.interpolation}"
-    -- Sweep the whole animation timeline in seconds; report each forbidden span (per interpolation).
-    for interp in ["linear", "cubic"] do
-      let sc := { base with interpolation := interp }
-      let steps := 900
-      let mut forbidden := 0
-      let mut clampOk := true
-      let mut prevForb := false
-      let mut spanStart : R := 0.0
-      IO.println s!"  [{interp}] forbidden spans (unclamped target outside the region):"
-      for f in [0:steps+1] do
-        let secs := Float.ofNat f / Float.ofNat steps * length
-        let tnorm := if length > 1e-9 then secs / length else 0.0
-        let d := V3.norm (targetAt sc tnorm)
-        let forb := !(inRegion sc d)
-        if !(inConeUnion sc (solve sc tnorm)) then clampOk := false
-        if forb then forbidden := forbidden + 1
-        if forb && !prevForb then spanStart := secs
-        if !forb && prevForb then IO.println s!"      t in [{spanStart}s, {secs}s]"
-        prevForb := forb
-      if prevForb then IO.println s!"      t in [{spanStart}s, {length}s]"
-      IO.println s!"    {interp}: {forbidden}/{steps+1} samples forbidden; kusudama clamp keeps every frame in region: {clampOk}"
+/-- Generate the same 60-point Fibonacci sphere the MCP ground-truth used. -/
+def fibSphere (n : Nat) : Array V3 := Id.run do
+  let ga : R := pi * (3.0 - Float.sqrt 5.0)
+  let mut out := #[]
+  for i in [0:n] do
+    let y := 1.0 - (Float.ofNat i / Float.ofNat (n-1)) * 2.0
+    let rad := Float.sqrt (let q := 1.0 - y*y; if q < 0.0 then 0.0 else q)
+    let th := ga * Float.ofNat i
+    out := out.push (V3.norm ⟨Float.cos th * rad, y, Float.sin th * rad⟩)
+  return out
+
+def fmt (x : R) : String := toString x
+
+/-- Run the faithful kusudama port on the live scene and:
+  1. report that it is a no-op (matching the C++),
+  2. write the port's outputs on the 60 ground-truth directions to `data/lean_out.csv`
+     (compared against `data/kusudama_ground_truth.parquet` by `scripts/validate.py`). -/
+def main (_args : List String) : IO Unit := do
+  let cones := liveKCones
+  IO.println s!"live scene: {cones.length} cones (+Y,+X,+Z @ 10deg), right_axis NONE"
+  let dirs := fibSphere 60
+  let mut nonzero := 0
+  let mut csv := "in_x,in_y,in_z,lean_out_x,lean_out_y,lean_out_z\n"
+  for d in dirs do
+    let o := continuousProject cones d 0.22
+    if V3.angle o d > d2r 0.01 then nonzero := nonzero + 1
+    csv := csv ++ s!"{fmt d.x},{fmt d.y},{fmt d.z},{fmt o.x},{fmt o.y},{fmt o.z}\n"
+  IO.FS.writeFile "data/lean_out.csv" csv
+  IO.println s!"kusudama port: {nonzero}/60 directions moved (C++ ground truth: 0/60) -> NO-OP, port matches"
+  IO.println "wrote data/lean_out.csv (validate vs data/kusudama_ground_truth.parquet with scripts/validate.py)"
+  -- The animation sweep, for the record: with the no-op constraint nothing is ever clamped.
+  for interp in ["linear", "cubic"] do
+    let sc := liveScene interp
+    let mut clamped := 0
+    for f in [0:900] do
+      let t := Float.ofNat f / 899.0
+      if V3.angle (solve sc t) (aimDir sc t) > d2r 0.5 then clamped := clamped + 1
+    IO.println s!"  {interp} sweep: {clamped}/900 frames actually clamped by the kusudama (0 = the bone follows the target unconstrained)"

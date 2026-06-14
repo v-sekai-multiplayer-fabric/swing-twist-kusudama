@@ -1,15 +1,14 @@
-import Lean.Data.Json
 import SwingTwistKusudama.Vec
 
 /-!
-# Scene — parse the Godot scene tree from JSON-LD.
+# Scene — the live Godot scene as Lean constants.
 
-Reads `data/scene.jsonld` into a typed `Scene`: the kusudama cones, the target's position keyframes,
-and the interpolation mode. JSON-LD is used so the scene is self-describing linked data (the
-`@context`/`@type`/`@vocab` make every node and field a resolvable term).
+The scene is **archived as Parquet (zstd)** under `data/` (`scene_cones.parquet`,
+`scene_keys.parquet`, `kusudama_ground_truth.parquet`) — that is the interchange/archival form, read
+back with [lean-duckdb](https://github.com/v-sekai-multiplayer-fabric/lean-duckdb) (or any DuckDB).
+These constants are the same values, imported from the running editor via the godot MCP, kept inline
+so the core sim builds without a native DuckDB dependency.
 -/
-
-open Lean (Json)
 
 namespace SwingTwistKusudama
 
@@ -25,65 +24,25 @@ deriving Repr, Inhabited
 
 structure Scene where
   cones : List Cone
-  rightAxis : String      -- "none" | "plusZ" | ...
+  rightAxis : String      -- "none" | "plusZ"
   endBoneLength : R
-  restForward : V3        -- the bone's rest extension direction (here +Y)
-  boneOrigin : V3         -- the end bone's global rest origin (the aim base)
+  restForward : V3
+  boneOrigin : V3
   interpolation : String  -- "linear" | "cubic"
   keys : List Keyframe
 deriving Repr, Inhabited
 
-namespace Json'
-open Lean
-
-def num (j : Json) : R := (j.getNum?.toOption.map (·.toFloat)).getD 0.0
-def field (j : Json) (k : String) : Option Json := (j.getObjVal? k).toOption
-def arr (j : Json) : Array Json := (j.getArr?.toOption).getD #[]
-def str (j : Json) (k : String) : String := ((j.getObjVal? k).bind (·.getStr?)).toOption.getD ""
-
-/-- A `{ "vec": [x,y,z] }` JSON-LD list value -> V3. -/
-def vec (j : Json) : V3 :=
-  match field j "vec" with
-  | some v => let a := arr v; ⟨num (a.getD 0 (Json.num 0)), num (a.getD 1 (Json.num 0)), num (a.getD 2 (Json.num 0))⟩
-  | none => ⟨0,0,0⟩
-
-end Json'
-
-open Json'
-
-/-- Find the first node of a given `@type` in the scene's `nodes` list. -/
-def findNode (root : Json) (ty : String) : Option Json :=
-  (arr ((field root "nodes").getD (Json.arr #[]))).find? (fun n => str n "@type" == ty)
-
-private def note {α} (o : Option α) (msg : String) : Except String α :=
-  match o with | some a => .ok a | none => .error msg
-
-/-- Find the IK node: any node carrying a kusudama `limitation` (FABRIK3D / CCDIK3D / SwingTwistIK3D
-all share the same limitation API). -/
-def findIK (root : Json) : Option Json :=
-  (arr ((field root "nodes").getD (Json.arr #[]))).find? (fun n => (field n "limitation").isSome)
-
-/-- Parse a `Scene` from a parsed JSON-LD document. -/
-def Scene.ofJson (root : Json) : Except String Scene := do
-  let ik ← note (findIK root) "no IK node with a limitation"
-  let lim ← note (field ik "limitation") "IK has no limitation"
-  let cones := (arr ((field lim "cones").getD (Json.arr #[]))).toList.map fun c =>
-    { center := vec ((field c "center").getD Json.null), radiusDeg := num ((field c "radiusDegrees").getD (Json.num 0)) }
-  let tgtName := str ik "targetNode"
-  let marker ← note ((arr ((field root "nodes").getD (Json.arr #[]))).find?
-      (fun n => str n "@type" == "Marker3D" && str n "name" == tgtName)) "target Marker3D not found"
-  let track ← note (field marker "positionTrack") "marker has no positionTrack"
-  let keys := (arr ((field track "keys").getD (Json.arr #[]))).toList.map fun k =>
-    { time := num ((field k "time").getD (Json.num 0)), position := vec ((field k "position").getD Json.null) }
-  return {
-    cones, rightAxis := str ik "rightAxis", endBoneLength := num ((field ik "endBoneLength").getD (Json.num 1))
-    restForward := yAxis, boneOrigin := vec ((field ik "boneGlobalOrigin").getD Json.null)
-    interpolation := str track "interpolation", keys
-  }
-
-/-- Parse a `Scene` from JSON-LD source text. -/
-def Scene.parse (s : String) : Except String Scene := do
-  let j ← Json.parse s
-  Scene.ofJson j
+/-- The live `node_3d` scene (MCP-imported): FABRIK3D/SwingTwistIK3D on Bone.002, kusudama with three
+10° cones at +Y/+X/+Z (right_axis NONE), a 9-key linear Marker3D position track. -/
+def liveScene (interp : String := "linear") : Scene :=
+  { cones :=
+      [ ⟨⟨0.0, 1.0, 0.0⟩, 9.9999997⟩
+      , ⟨⟨1.0, 0.0, 0.0⟩, 9.9999997⟩
+      , ⟨⟨0.0, 0.0169989205896854, 0.999855518341064⟩, 9.9999997⟩ ]
+    rightAxis := "none", endBoneLength := 6.0, restForward := yAxis, boneOrigin := ⟨0, 2, 0⟩
+    interpolation := interp
+    keys :=
+      [ ⟨0.0, ⟨0,0,0⟩⟩, ⟨1.0, ⟨5,0,0⟩⟩, ⟨2.0, ⟨0,5,0⟩⟩, ⟨3.0, ⟨5,0,0⟩⟩, ⟨4.0, ⟨0,0,5⟩⟩
+      , ⟨5.0, ⟨5,0,0⟩⟩, ⟨6.0, ⟨0,0,5⟩⟩, ⟨7.0, ⟨0,5,0⟩⟩, ⟨8.0, ⟨0,0,5⟩⟩ ] }
 
 end SwingTwistKusudama
