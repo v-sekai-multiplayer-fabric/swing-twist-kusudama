@@ -21,16 +21,19 @@ truth.
 - `humanoid_ground_truth.parquet` — the four rich multi-cone joints (LeftLowerArm, LeftHand, LeftFoot,
   Head), each `solve`d over a 200-direction Fibonacci sphere: `in_xyz` → `cpp_out_xyz` + `move_deg`.
 
-The Lean cone constants live in `SwingTwistKusudama/Humanoid.lean`, generated from
-`humanoid_cones.parquet` by `scripts/gen_humanoid_lean.py` so the two stay in lockstep.
+The sim reads these cones from Parquet at run time (no generated Lean source), so the Parquet is the
+single source of truth.
 
 ## Validating the port against C++
 
-`lake exe sim` runs the faithful port (`continuousProject`) over the same joints and sphere. Lean
-emits text only, so it writes a transient `data/lean_out.csv`; `python3 scripts/validate.py` folds
-that into `data/lean_out.parquet` (zstd), deletes the CSV, then joins it to
-`humanoid_ground_truth.parquet` on (setting, joint, i) and reports the per-point angular error. The
-`data/` directory stays Parquet-only.
+The toolchain is Lean only — Parquet I/O goes through
+[lean-duckdb](https://github.com/v-sekai-multiplayer-fabric/lean-duckdb) (a git dependency; its
+`post_update` hook vendors the DuckDB binary on `lake update`). No Python, no CSV.
+
+`lake exe sim` reads the cones and the C++ input directions from `data/humanoid_*.parquet`, runs the
+faithful port (`continuousProject`) on the SAME inputs, writes the port output to
+`data/lean_out.parquet`, then joins it against `humanoid_ground_truth.parquet` on (setting, joint, i)
+and writes the per-point angular error to `data/validation.parquet`, all via DuckDB `COPY` from Lean.
 
 The current result: every joint is a NO-OP — `solve` returns each sphere direction unchanged, and the
 port reproduces that point for point (max |C++ − Lean| = 0.00004°). The cones cover a wide keep-in
@@ -40,11 +43,10 @@ never clamps over the swing sphere, not a teleport.
 
 ## Re-importing the scene
 
-Dump the open scene from the editor with the godot MCP bridge (`run_script`), reading the IK node's
-settings/joints/limitation cones and the goal markers, then `python3 scripts/scene_to_parquet.py`
-writes the `humanoid_*.parquet` set (zstd) and `scripts/gen_humanoid_lean.py` regenerates the Lean
-constants. The older toy scene (three 10° cones at +Y/+X/+Z) stays in `data/scene_cones.parquet` /
-`data/kusudama_ground_truth.parquet` for reference.
+Dump the open scene from the editor with the godot MCP bridge (`run_script`), writing one transient
+`data/humanoid_<table>.json` per table (cones, joints, meta, targets, ground_truth). Then `lake exe
+import-scene` folds each JSON into `data/humanoid_<table>.parquet` (zstd) via DuckDB `read_json_auto`
+and deletes the JSON, so `data/` stays Parquet-only. The older toy scene (three 10° cones at
++Y/+X/+Z) stays in `data/scene_cones.parquet` / `data/kusudama_ground_truth.parquet` for reference.
 
-Parquet loads back through
-[lean-duckdb](https://github.com/v-sekai-multiplayer-fabric/lean-duckdb) or any DuckDB.
+Parquet loads back through lean-duckdb or any DuckDB.

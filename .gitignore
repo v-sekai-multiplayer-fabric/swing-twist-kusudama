@@ -1,4 +1,6 @@
 /.lake/
 *.olean
-# Lean emits a transient CSV that validate.py folds into Parquet; data/ stays Parquet-only.
-*.csv
+# MCP dumps the scene as transient JSON; `import-scene` folds it into Parquet. data/ stays
+# Parquet-only, so no CSV/JSON is ever committed.
+data/*.csv
+data/*.json
