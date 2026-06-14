@@ -43,3 +43,8 @@ lean_exe «sim» where
 lean_exe «import-scene» where
   root := `SceneImport
   moreLinkArgs := duckdbLinkArgs
+
+-- Fold the AddBiomechanics ROM dumps (transient JSON/JSONL from addb-extract) into addbio_*_rom.parquet.
+lean_exe «import-addbio» where
+  root := `AddbioImport
+  moreLinkArgs := duckdbLinkArgs

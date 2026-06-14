@@ -4,3 +4,5 @@
 # Parquet-only, so no CSV/JSON is ever committed.
 data/*.csv
 data/*.json
+# Datasets live in the `datasets-v1` GitHub release, not in-tree. Fetch with data/fetch.sh.
+data/*.parquet

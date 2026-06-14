@@ -5,6 +5,16 @@ A **Lean 4 + [Plausible](https://github.com/leanprover-community/plausible)** si
 the engine's own output. Part of the sim-first workflow for the v-sekai multiplayer fabric IK work: a
 change works in Lean/Plausible **first** (seconds) before a Godot rebuild (minutes).
 
+## Datasets
+
+The Parquet datasets are **GitHub release artifacts**, not committed in-tree (`data/*.parquet` is
+gitignored). Fetch them into `data/` with `data/fetch.sh` (or
+`gh release download datasets-v1 --repo v-sekai-multiplayer-fabric/swing-twist-kusudama --dir data
+--pattern '*.parquet'`). After regenerating, re-upload with `gh release upload datasets-v1
+data/*.parquet --clobber`. The set includes the avatar rig (`humanoid_*`), the C++ ground truth, the
+toy scene (`scene_*`), the AddBiomechanics ROM (`addbio_*_rom`), and the sim outputs
+(`lean_out`/`validation`).
+
 ## The active scene
 
 `data/humanoid_*.parquet` holds the live humanoid rig pulled from the running editor via the godot
