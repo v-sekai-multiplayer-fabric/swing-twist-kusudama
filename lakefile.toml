@@ -1,0 +1,14 @@
+name = "swing_twist_kusudama"
+defaultTargets = ["SwingTwistKusudama", "sim"]
+
+[[require]]
+name = "plausible"
+git = "https://github.com/leanprover-community/plausible"
+rev = "main"
+
+[[lean_lib]]
+name = "SwingTwistKusudama"
+
+[[lean_exe]]
+name = "sim"
+root = "Main"
