@@ -1,2 +1,4 @@
 /.lake/
 *.olean
+# Lean emits a transient CSV that validate.py folds into Parquet; data/ stays Parquet-only.
+*.csv
